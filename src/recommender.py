@@ -2,12 +2,65 @@ import csv
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 
-GENRE_WEIGHT = 2.0
-MOOD_WEIGHT = 1.0
-ENERGY_WEIGHT = 1.0
-ACOUSTIC_WEIGHT = 0.5
-INSTRUMENTAL_WEIGHT = 0.5
-POPULARITY_WEIGHT = 0.5
+# ---------------------------------------------------------------------------
+# Scoring Strategies (Strategy Pattern)
+#
+# Each mode is a dictionary of weights. score_song() reads from whichever
+# strategy is passed in. To add a new mode, just define a new dict.
+# ---------------------------------------------------------------------------
+
+SCORING_MODES = {
+    "balanced": {
+        "genre": 1.0,
+        "mood": 1.0,
+        "energy": 2.0,
+        "acoustic": 0.5,
+        "instrumental": 0.5,
+        "popularity": 0.5,
+        "decade": 1.0,
+        "mood_tags": 0.3,
+        "mood_tags_max": 1.5,
+        "language": 1.0,
+        "duration": 0.5,
+        "replay": 0.5,
+    },
+    "genre-first": {
+        "genre": 3.0,
+        "mood": 1.5,
+        "energy": 1.0,
+        "acoustic": 0.5,
+        "instrumental": 0.5,
+        "popularity": 0.5,
+        "decade": 0.5,
+        "mood_tags": 0.3,
+        "mood_tags_max": 1.5,
+        "language": 0.5,
+        "duration": 0.25,
+        "replay": 0.25,
+    },
+    "energy-focused": {
+        "genre": 0.5,
+        "mood": 0.5,
+        "energy": 3.0,
+        "acoustic": 0.5,
+        "instrumental": 0.5,
+        "popularity": 0.5,
+        "decade": 0.5,
+        "mood_tags": 0.5,
+        "mood_tags_max": 1.5,
+        "language": 0.5,
+        "duration": 0.5,
+        "replay": 0.5,
+    },
+}
+
+DEFAULT_MODE = "balanced"
+
+# --- Diversity penalties ---
+# Applied during greedy selection when a candidate shares artist/genre
+# with an already-picked song. Stacks per duplicate.
+ARTIST_REPEAT_PENALTY = 3.0   # heavy — same artist twice feels repetitive
+GENRE_REPEAT_PENALTY = 1.5    # lighter — same genre twice is less jarring
 
 
 @dataclass
@@ -28,6 +81,11 @@ class Song:
     acousticness: float
     instrumentalness: float = 0.0
     popularity: float = 0.0
+    release_decade: int = 2020
+    mood_tags: str = ""
+    lyrics_language: str = "english"
+    duration_sec: int = 210
+    replay_value: float = 0.5
 
 
 @dataclass
@@ -42,43 +100,104 @@ class UserProfile:
     likes_acoustic: bool
     prefers_instrumental: bool = False
     prefers_popular: bool = False
+    preferred_decade: int = 2020
+    liked_mood_tags: str = ""
+    preferred_language: str = "english"
+    target_duration_sec: int = 210
+    values_replayability: bool = False
 
 
-def score_song(song_dict: Dict, user_prefs: Dict) -> Tuple[float, str]:
+def get_weights(mode: str = DEFAULT_MODE) -> Dict:
+    """Return the weight dictionary for a given scoring mode."""
+    if mode not in SCORING_MODES:
+        raise ValueError(f"Unknown mode '{mode}'. Choose from: {list(SCORING_MODES.keys())}")
+    return SCORING_MODES[mode]
+
+
+def max_score(mode: str = DEFAULT_MODE) -> float:
+    """Calculate the theoretical max score for a given mode."""
+    w = get_weights(mode)
+    return (w["genre"] + w["mood"] + w["energy"] + w["acoustic"]
+            + w["instrumental"] + w["popularity"] + w["decade"]
+            + w["mood_tags_max"] + w["language"] + w["duration"] + w["replay"])
+
+
+def score_song(song_dict: Dict, user_prefs: Dict, mode: str = DEFAULT_MODE) -> Tuple[float, str]:
     """Score a single song against user preferences. Returns (score, explanation)."""
+    w = get_weights(mode)
     score = 0.0
     reasons = []
 
     if song_dict["genre"] == user_prefs["favorite_genre"]:
-        score += GENRE_WEIGHT
-        reasons.append(f"genre match (+{GENRE_WEIGHT})")
+        score += w["genre"]
+        reasons.append(f"genre match (+{w['genre']})")
 
     if song_dict["mood"] == user_prefs["favorite_mood"]:
-        score += MOOD_WEIGHT
-        reasons.append(f"mood match (+{MOOD_WEIGHT})")
+        score += w["mood"]
+        reasons.append(f"mood match (+{w['mood']})")
 
     energy_diff = abs(song_dict["energy"] - user_prefs["target_energy"])
-    energy_score = ENERGY_WEIGHT * (1 - energy_diff)
+    energy_score = w["energy"] * (1 - energy_diff)
     score += energy_score
     reasons.append(f"energy similarity (+{energy_score:.2f})")
 
     if "acousticness" in song_dict and "likes_acoustic" in user_prefs:
         is_acoustic = song_dict["acousticness"] > 0.5
         if is_acoustic == user_prefs["likes_acoustic"]:
-            score += ACOUSTIC_WEIGHT
-            reasons.append(f"acousticness match (+{ACOUSTIC_WEIGHT})")
+            score += w["acoustic"]
+            reasons.append(f"acousticness match (+{w['acoustic']})")
 
     if "instrumentalness" in song_dict and "prefers_instrumental" in user_prefs:
         is_instrumental = song_dict["instrumentalness"] > 0.5
         if is_instrumental == user_prefs["prefers_instrumental"]:
-            score += INSTRUMENTAL_WEIGHT
-            reasons.append(f"instrumentalness match (+{INSTRUMENTAL_WEIGHT})")
+            score += w["instrumental"]
+            reasons.append(f"instrumentalness match (+{w['instrumental']})")
 
     if "popularity" in song_dict and "prefers_popular" in user_prefs:
         is_popular = song_dict["popularity"] > 0.5
         if is_popular == user_prefs["prefers_popular"]:
-            score += POPULARITY_WEIGHT
-            reasons.append(f"popularity match (+{POPULARITY_WEIGHT})")
+            score += w["popularity"]
+            reasons.append(f"popularity match (+{w['popularity']})")
+
+    # --- Advanced features ---
+
+    # Decade proximity: closer decades score higher, max span = 40 years
+    if "release_decade" in song_dict and "preferred_decade" in user_prefs:
+        decade_diff = abs(song_dict["release_decade"] - user_prefs["preferred_decade"])
+        decade_score = w["decade"] * max(0, 1 - decade_diff / 40)
+        score += decade_score
+        reasons.append(f"decade proximity (+{decade_score:.2f})")
+
+    # Mood tags: per-tag weight, capped at mood_tags_max
+    if "mood_tags" in song_dict and "liked_mood_tags" in user_prefs:
+        song_tags = set(song_dict["mood_tags"].split("|")) if song_dict["mood_tags"] else set()
+        user_tags = set(user_prefs["liked_mood_tags"].split("|")) if user_prefs["liked_mood_tags"] else set()
+        overlap = len(song_tags & user_tags)
+        tags_score = min(overlap * w["mood_tags"], w["mood_tags_max"])
+        if tags_score > 0:
+            score += tags_score
+            matched = " + ".join(song_tags & user_tags)
+            reasons.append(f"mood tags [{matched}] (+{tags_score:.2f})")
+
+    # Lyrics language: exact match
+    if "lyrics_language" in song_dict and "preferred_language" in user_prefs:
+        if song_dict["lyrics_language"] == user_prefs["preferred_language"]:
+            score += w["language"]
+            reasons.append(f"language match (+{w['language']})")
+
+    # Duration proximity: tolerance of 300 seconds (5 minutes)
+    if "duration_sec" in song_dict and "target_duration_sec" in user_prefs:
+        dur_diff = abs(song_dict["duration_sec"] - user_prefs["target_duration_sec"])
+        dur_score = w["duration"] * max(0, 1 - dur_diff / 300)
+        score += dur_score
+        reasons.append(f"duration fit (+{dur_score:.2f})")
+
+    # Replay value: boolean threshold at 0.5
+    if "replay_value" in song_dict and "values_replayability" in user_prefs:
+        is_replayable = song_dict["replay_value"] > 0.5
+        if is_replayable == user_prefs["values_replayability"]:
+            score += w["replay"]
+            reasons.append(f"replay match (+{w['replay']})")
 
     explanation = "Matched on: " + ", ".join(reasons)
     return score, explanation
@@ -147,20 +266,73 @@ def load_songs(csv_path: str) -> List[Dict]:
                 "acousticness": float(row["acousticness"]),
                 "instrumentalness": float(row["instrumentalness"]),
                 "popularity": float(row["popularity"]),
+                "release_decade": int(row["release_decade"]),
+                "mood_tags": row["mood_tags"],
+                "lyrics_language": row["lyrics_language"],
+                "duration_sec": int(row["duration_sec"]),
+                "replay_value": float(row["replay_value"]),
             })
     return songs
 
 
-def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5) -> List[Tuple[Dict, float, str]]:
-    """Score all songs against user preferences and return the top-k as (song, score, explanation) tuples."""
-    # --- Beginner-friendly version ---
-    # scored = []
-    # for song in songs:
-    #     s, explanation = score_song(song, user_prefs)
-    #     scored.append((song, s, explanation))
-    # scored.sort(key=lambda x: x[1], reverse=True)
-    # return scored[:k]
+def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5,
+                    mode: str = DEFAULT_MODE,
+                    diverse: bool = False) -> List[Tuple[Dict, float, str]]:
+    """Score all songs against user preferences and return the top-k.
 
-    # --- Pythonic way (same logic, compact) ---
-    scored = [(song, s, exp) for song in songs for s, exp in [score_song(song, user_prefs)]]
-    return sorted(scored, key=lambda x: x[1], reverse=True)[:k]
+    When diverse=False (default): pure score ranking.
+    When diverse=True: greedy selection with penalties for repeated artists/genres.
+    """
+    scored = [(song, s, exp) for song in songs for s, exp in [score_song(song, user_prefs, mode)]]
+
+    if not diverse:
+        return sorted(scored, key=lambda x: x[1], reverse=True)[:k]
+
+    # --- Greedy diverse selection ---
+    # Pick songs one at a time. Before each pick, penalize candidates that
+    # share an artist or genre with already-selected songs.
+    remaining = sorted(scored, key=lambda x: x[1], reverse=True)
+    selected = []
+    picked_artists = []
+    picked_genres = []
+
+    for _ in range(min(k, len(remaining))):
+        best_idx = 0
+        best_adjusted = -1.0
+
+        for i, (song, base_score, exp) in enumerate(remaining):
+            penalty = 0.0
+            artist_hits = picked_artists.count(song["artist"])
+            genre_hits = picked_genres.count(song["genre"])
+            penalty += artist_hits * ARTIST_REPEAT_PENALTY
+            penalty += genre_hits * GENRE_REPEAT_PENALTY
+
+            adjusted = base_score - penalty
+            if adjusted > best_adjusted:
+                best_adjusted = adjusted
+                best_idx = i
+
+        song, base_score, exp = remaining.pop(best_idx)
+
+        # Build explanation showing penalty if applied
+        penalty = 0.0
+        penalty_reasons = []
+        artist_hits = picked_artists.count(song["artist"])
+        genre_hits = picked_genres.count(song["genre"])
+        if artist_hits > 0:
+            p = artist_hits * ARTIST_REPEAT_PENALTY
+            penalty += p
+            penalty_reasons.append(f"repeat artist '{song['artist']}' (-{p:.1f})")
+        if genre_hits > 0:
+            p = genre_hits * GENRE_REPEAT_PENALTY
+            penalty += p
+            penalty_reasons.append(f"repeat genre '{song['genre']}' (-{p:.1f})")
+
+        if penalty_reasons:
+            exp += ", DIVERSITY: " + ", ".join(penalty_reasons)
+
+        selected.append((song, base_score - penalty, exp))
+        picked_artists.append(song["artist"])
+        picked_genres.append(song["genre"])
+
+    return selected

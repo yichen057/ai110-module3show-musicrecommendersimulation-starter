@@ -146,33 +146,73 @@ pytest
 
 You can add more tests in `tests/test_recommender.py`.
 
+## Screeshots:
+
+### 1) Phase 3: Implementation- Step 4: CLI Verification
+
 A screenshot of terminal output showing the recommendations (song titles, scores, and reasons).
 
 ![image-20260412200110616](assets/image-20260412200110616.png)
+
+### 2) Phase 4: Evaluation and Explanation- Step 1: Stress Test with Diverse Profiles
+
+a **screenshot** of terminal output for each profile's recommendations.
+
+![image-20260412203543635](assets/image-20260412203543635.png)
+
+![image-20260412203802020](assets/image-20260412203802020.png)
+
+![image-20260412203811607](assets/image-20260412203811607.png)
+
+![image-20260412203824500](assets/image-20260412203824500.png)
+
+![image-20260412203835549](assets/image-20260412203835549.png)
+
+![image-20260412203845449](assets/image-20260412203845449.png)
+
+### 3) After implementing four challenges, the screenshots show as follows:
+
+![image-20260412224827833](assets/image-20260412224827833.png)
+
+![image-20260412224905978](assets/image-20260412224905978.png)
+
+![image-20260412224922470](assets/image-20260412224922470.png)
 
 ---
 
 ## Experiments You Tried
 
-Use this section to document the experiments you ran. For example:
+### Experiment 1: Weight Shift (Genre 2.0 → 1.0, Energy 1.0 → 2.0)
 
-- What happened when you changed the weight on genre from 2.0 to 0.5
-- What happened when you added tempo or valence to the score
-- How did your system behave for different types of users
+We noticed that genre at 2.0 was acting like a trump card. For the Chill Metal Listener (metal, chill, energy 0.2), the system recommended Basement Fury (aggressive, energy 0.96) as #1 simply because it matched on genre. The user asked for calm music and got the loudest song in the catalog.
+
+We halved genre to 1.0 and doubled energy to 2.0. Results:
+- Chill Metal Listener: Spacewalk Thoughts (chill, energy 0.28) rose to #1. Basement Fury dropped to #3. This felt much more accurate.
+- All three standard profiles (Pop Fan, Lofi Listener, Rock Fan) kept the same #1 songs. The change only affected cases where preferences conflicted.
+
+### Experiment 2: Adversarial User Profiles
+
+We added three profiles designed to break the system:
+- **Sad But Energetic** (classical, melancholy, energy 0.9): Exposed that Ghost Waltz wins despite a huge energy mismatch because it is the only classical + melancholy song.
+- **Acoustic Popular Pop** (pop, happy, acoustic): Exposed that the 0.5-point acoustic bonus cannot compete with genre + mood. Sunrise City wins even though it is not acoustic at all.
+- **Chill Metal Listener** (metal, chill, energy 0.2): Exposed genre dominance (fixed by Experiment 1).
+
+### Experiment 3: Math Verification
+
+We hand-calculated scores for Basement Fury (2.98) and Spacewalk Thoughts (3.34) under the new weights, checking each feature line by line. All calculations matched the program output. We also confirmed the max score cannot exceed 5.50.
 
 ---
 
 ## Limitations and Risks
 
-Summarize some limitations of your recommender.
+- **Tiny catalog**: Only 18 songs. Most genres have just 1 song, so there is no real ranking within a genre — the system just picks the only option and fills the rest with unrelated songs.
+- **Exact string matching**: "Pop" and "indie pop" get zero partial credit. "Chill" and "relaxed" are treated as completely different moods. Small wording differences cost a full 1.0 points.
+- **Ignored features**: Tempo, valence, and danceability are in the CSV but never used. Dance-oriented and tempo-sensitive listeners are invisible to the system.
+- **Boolean features too weak**: Acoustic, instrumental, and popularity are worth 0.5 each. A user who explicitly asks for acoustic music still gets non-acoustic songs because 0.5 points cannot compete with genre + mood + energy.
+- **No language or lyrics**: The system knows nothing about what a song sounds like or what language it is in.
+- **Popularity feedback loop**: Popular songs get +0.5 for mainstream users. Niche songs can never earn that bonus, so they stay buried.
 
-Examples:
-
-- It only works on a tiny catalog
-- It does not understand lyrics or language
-- It might over favor one genre or mood
-
-You will go deeper on this in your model card.
+See [model_card.md](model_card.md) for a deeper analysis.
 
 ---
 
@@ -182,116 +222,101 @@ Read and complete `model_card.md`:
 
 [**Model Card**](model_card.md)
 
-Write 1 to 2 paragraphs here about what you learned:
+### What I learned about how recommenders turn data into predictions
 
-- about how recommenders turn data into predictions
-- about where bias or unfairness could show up in systems like this
+My biggest learning moment was seeing how one number can break everything. Genre weight at 2.0 seemed reasonable — of course genre matters most, right? But when the Chill Metal Listener got Basement Fury (aggressive, energy 0.96) as their #1 recommendation, it was obvious that "most important" and "overrides everything else" are not the same thing. Changing genre to 1.0 and energy to 2.0 fixed the worst case without breaking any of the normal profiles. That taught me that tuning weights is not about finding the "correct" value. It is about finding a balance where no single feature can drown out all the others.
 
+I was also surprised that six if-statements and basic addition can feel like real recommendations. When Library Rain scored a perfect 5.50 for the Lofi Listener, it genuinely seemed like the system understood that user. It did not. It just added up numbers. The illusion works when preferences align cleanly with the catalog. It breaks when they conflict — and that is exactly what the adversarial profiles exposed.
 
----
+### Where bias and unfairness show up
 
-## 7. `model_card_template.md`
+Using AI tools (Claude) helped me spot patterns I would have missed — like the fact that acoustic songs in my CSV are almost never popular, which creates a hidden conflict. But I still had to hand-verify every score calculation. AI is fast at generating ideas, but trusting the output without checking the math would have been a mistake.
 
-Combines reflection and model card framing from the Module 3 guidance. :contentReference[oaicite:2]{index=2}  
-
-```markdown
-# 🎧 Model Card - Music Recommender Simulation
-
-## 1. Model Name
-
-Give your recommender a name, for example:
-
-> VibeFinder 1.0
+The biggest source of unfairness is the catalog itself. Classical, metal, folk, and world each have 1 song. A user who likes any of those genres gets the same #1 every single time, then a wall of random results. Pop and lofi users get variety because those genres have 2-3 songs. The scoring logic is the same for everyone, but the experience is not — and that is a form of bias that lives in the data, not the algorithm. In a real product, this could mean entire communities of listeners feel ignored, not because the system is broken, but because nobody added enough music that represents them.
 
 ---
 
-## 2. Intended Use
+## Challenge Implementations
 
-- What is this system trying to do
-- Who is it for
+### Challenge 1: Advanced Song Features
 
-Example:
+Added 5 new attributes to `data/songs.csv` and scoring logic in `src/recommender.py`:
 
-> This model suggests 3 to 5 songs from a small catalog based on a user's preferred genre, mood, and energy level. It is for classroom exploration only, not for real users.
+| Feature | Column | Type | Scoring Rule | Max Points |
+|---------|--------|------|--------------|------------|
+| Release Decade | `release_decade` | int (1990–2020) | `1.0 × (1 - |user_decade - song_decade| / 40)` — closer decades score higher | 1.0 |
+| Mood Tags | `mood_tags` | pipe-separated strings | 0.3 per matching tag, capped at 1.5 | 1.5 |
+| Lyrics Language | `lyrics_language` | string (english, instrumental, spanish, japanese) | Exact match = +1.0 | 1.0 |
+| Duration | `duration_sec` | int (seconds) | `0.5 × (1 - |diff| / 300)` — 5-minute tolerance | 0.5 |
+| Replay Value | `replay_value` | float 0–1 | Boolean threshold at 0.5, match = +0.5 | 0.5 |
 
----
+Max score increased from 5.5 to 10.0 (Balanced mode). User profiles in `main.py` were updated with matching preferences (`preferred_decade`, `liked_mood_tags`, `preferred_language`, `target_duration_sec`, `values_replayability`).
 
-## 3. How It Works (Short Explanation)
+### Challenge 2: Multiple Scoring Modes (Strategy Pattern)
 
-Describe your scoring logic in plain language.
+Implemented three scoring modes via a `SCORING_MODES` dictionary in `recommender.py`. The `score_song()` function accepts a `mode` parameter and reads weights from the corresponding dictionary. No scoring logic is duplicated — only the weights change.
 
-- What features of each song does it consider
-- What information about the user does it use
-- How does it turn those into a number
+| Feature | Balanced | Genre-First | Energy-Focused |
+|---------|----------|-------------|----------------|
+| Genre | 1.0 | **3.0** | 0.5 |
+| Mood | 1.0 | 1.5 | 0.5 |
+| Energy | **2.0** | 1.0 | **3.0** |
+| Acoustic / Instrumental / Popularity | 0.5 each | 0.5 each | 0.5 each |
+| Decade | 1.0 | 0.5 | 0.5 |
+| Mood Tags (per tag) | 0.3 | 0.3 | 0.5 |
+| Language | 1.0 | 0.5 | 0.5 |
+| Duration | 0.5 | 0.25 | 0.5 |
+| Replay | 0.5 | 0.25 | 0.5 |
 
-Try to avoid code in this section, treat it like an explanation to a non programmer.
+Example result — Chill Metal Listener's #1 per mode:
+- **Genre-First**: Basement Fury (6.28) — genre=3.0 dominates
+- **Balanced**: Basement Fury (5.76) — decade + language bonuses help
+- **Energy-Focused**: Coffee Shop Stories (5.48) — energy=3.0 rewards low-energy match
 
----
+### Challenge 3: Diversity and Fairness Logic
 
-## 4. Data
+Added a diversity penalty in `recommend_songs()` using greedy selection. When `diverse=True`, the system picks songs one at a time and penalizes candidates that share an artist or genre with already-picked songs:
 
-Describe your dataset.
+- **Repeat artist**: -3.0 per occurrence (heavy — same artist twice feels repetitive)
+- **Repeat genre**: -1.5 per occurrence (lighter — same genre twice is less jarring)
+- Penalties **stack** — the first repeat costs -1.5 or -3.0, the second costs double
 
-- How many songs are in `data/songs.csv`
-- Did you add or remove any songs
-- What kinds of genres or moods are represented
-- Whose taste does this data mostly reflect
+Example — Chill Lofi Listener top 3:
 
----
+| Rank | Without Diversity | With Diversity |
+|------|-------------------|----------------|
+| #1 | Library Rain (lofi, Paper Lanterns) 9.37 | Library Rain (lofi, Paper Lanterns) 9.37 |
+| #2 | Midnight Coding (lofi, **LoRoom**) 8.12 | **Spacewalk Thoughts (ambient, Orbit Bloom) 7.24** |
+| #3 | Focus Flow (lofi, **LoRoom**) 7.33 | Midnight Coding (lofi, LoRoom) 6.62 (-1.5 genre) |
 
-## 5. Strengths
+Without diversity: 3 lofi songs, 2 by LoRoom. With diversity: ambient track surfaces at #2, user discovers new music.
 
-Where does your recommender work well
+### Challenge 4: Visual Summary Table
 
-You can think about:
-- Situations where the top results "felt right"
-- Particular user profiles it served well
-- Simplicity or transparency benefits
+Replaced plain-text output with `tabulate` library (`pip install tabulate`, added to `requirements.txt`). Output now has two layers per mode:
 
----
+**1. Summary table** — bordered table for quick scanning:
+```
+┌────────┬────────────────┬───────────────┬───────┬───────┬────────┬─────────────┐
+│ Rank   │ Title          │ Artist        │ Genre │ Mood  │ Energy │ Score       │
+├────────┼────────────────┼───────────────┼───────┼───────┼────────┼─────────────┤
+│ #1     │ Sunrise City   │ Neon Echo     │ pop   │ happy │   0.82 │ 9.04 / 10.0 │
+│ #2     │ Gym Hero       │ Max Pulse     │ pop   │ intense│  0.93 │ 7.62 / 10.0 │
+└────────┴────────────────┴───────────────┴───────┴───────┴────────┴─────────────┘
+```
 
-## 6. Limitations and Bias
+**2. Detail cards** — per-song breakdown with `+` for scoring bonuses and `-` for diversity penalties:
+```
+  #3  Midnight Coding — LoRoom  [6.62/10.0, 66%]
+  ──────────────────────────────────────────────────
+  + genre match (+1.0)
+  + mood match (+1.0)
+  + energy similarity (+1.86)
+  ...
+  - repeat genre 'lofi' (-1.5)
+```
 
-Where does your recommender struggle
+Key files modified: `src/main.py` (display functions `print_summary_table()`, `print_detail_cards()`), `src/recommender.py` (scoring modes, diversity logic), `data/songs.csv` (5 new columns), `requirements.txt` (added tabulate).
 
-Some prompts:
-- Does it ignore some genres or moods
-- Does it treat all users as if they have the same taste shape
-- Is it biased toward high energy or one genre by default
-- How could this be unfair if used in a real product
-
----
-
-## 7. Evaluation
-
-How did you check your system
-
-Examples:
-- You tried multiple user profiles and wrote down whether the results matched your expectations
-- You compared your simulation to what a real app like Spotify or YouTube tends to recommend
-- You wrote tests for your scoring logic
-
-You do not need a numeric metric, but if you used one, explain what it measures.
-
----
-
-## 8. Future Work
-
-If you had more time, how would you improve this recommender
-
-Examples:
-
-- Add support for multiple users and "group vibe" recommendations
-- Balance diversity of songs instead of always picking the closest match
-- Use more features, like tempo ranges or lyric themes
-
----
-
-## 9. Personal Reflection
-
-A few sentences about what you learned:
-
-- What surprised you about how your system behaved
-- How did building this change how you think about real music recommenders
-- Where do you think human judgment still matters, even if the model seems "smart"
+Run with: `python3 -m src.main`
 
